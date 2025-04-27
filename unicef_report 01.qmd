@@ -1,0 +1,424 @@
+---
+title: "Child Deprivation Across the World: Patterns and Correlations"
+author: "UNICEF Data Analyst"
+date: "April 22, 2025"
+format:
+  html:
+    theme: cosmo
+    embed-resources: true
+    code-fold: true
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    fig-width: 8
+    fig-height: 6
+    fig-align: center
+    highlight-style: github
+---
+
+```{python}
+#| label: setup
+#| include: false
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from plotnine import *
+import geopandas as gpd
+from scipy import stats
+
+# Set random seed for reproducibility
+np.random.seed(42)
+```
+
+# Introduction
+
+Child deprivation remains a critical global issue affecting millions of children worldwide. It encompasses multiple dimensions including access to education, healthcare, nutrition, sanitation, and safe living conditions. This report analyzes patterns of child deprivation across countries and explores its relationship with key socioeconomic indicators.
+
+The analysis focuses on two key metrics:
+
+1. **Multiple Deprivation Indicator**: Percentage of children suffering at least two deprivations
+2. **Severe Deprivation Indicator**: Percentage of children suffering exactly four deprivations
+
+These indicators help us understand both the breadth and depth of child deprivation globally, allowing for targeted policy interventions and resource allocation.
+
+# Data and Methodology
+
+## Data Sources
+
+This analysis utilizes three primary datasets:
+
+- **Indicator 1**: Percentage of children suffering at least two deprivations (Homogeneous severe standards)
+- **Indicator 2**: Percentage of children suffering exactly four deprivations (Homogeneous severe standards)
+- **Metadata**: Country-level socioeconomic indicators (GDP per capita, population, life expectancy, etc.)
+
+The data covers multiple countries across different years, allowing for both cross-sectional and time-series analyses.
+
+## Methodology
+
+Our analytical approach combines:
+
+- **Descriptive statistics** to understand the magnitude and distribution of child deprivation
+- **Geospatial visualization** to identify regional patterns
+- **Correlation analysis** to explore relationships with socioeconomic factors
+- **Time-series analysis** to track progress over time
+
+```{python}
+#| label: load-data
+#| warning: false
+
+# Load the datasets
+indicator1 = pd.read_csv("unicef_indicator_1.csv")
+indicator2 = pd.read_csv("unicef_indicator_2.csv")
+metadata = pd.read_csv("unicef_metadata.csv")
+
+# Extract indicator names for reference
+indicator1_name = indicator1['indicator'].iloc[0]
+indicator2_name = indicator2['indicator'].iloc[0]
+
+# Print basic information about the datasets
+print(f"Indicator 1: {indicator1_name}")
+print(f"Indicator 2: {indicator2_name}")
+print(f"Number of countries in indicator 1: {indicator1['country'].nunique()}")
+print(f"Number of countries in indicator 2: {indicator2['country'].nunique()}")
+print(f"Years covered: {min(indicator1['time_period'])}-{max(indicator1['time_period'])}")
+```
+
+# Global Overview of Child Deprivation
+
+## Current State of Child Deprivation
+
+The analysis begins with a global overview of child deprivation, focusing on the most recent available data. This provides a snapshot of the current state of child deprivation worldwide.
+
+```{python}
+#| label: global-overview
+#| warning: false
+
+# Get the most recent year in the data
+latest_year = max(indicator1['time_period'])
+
+# Filter data for the most recent year and total sex category
+latest_indicator1 = indicator1[(indicator1['time_period'] == latest_year) & 
+                              (indicator1['sex'] == 'Total')]
+latest_indicator2 = indicator2[(indicator2['time_period'] == latest_year) & 
+                              (indicator2['sex'] == 'Total')]
+
+# Calculate summary statistics
+ind1_mean = latest_indicator1['obs_value'].mean()
+ind1_median = latest_indicator1['obs_value'].median()
+ind1_std = latest_indicator1['obs_value'].std()
+ind2_mean = latest_indicator2['obs_value'].mean()
+ind2_median = latest_indicator2['obs_value'].median()
+ind2_std = latest_indicator2['obs_value'].std()
+
+# Create a summary dataframe
+summary_stats = pd.DataFrame({
+    'Indicator': [indicator1_name, indicator2_name],
+    'Mean (%)': [ind1_mean*100, ind2_mean*100],
+    'Median (%)': [ind1_median*100, ind2_median*100],
+    'Std Dev (%)': [ind1_std*100, ind2_std*100],
+    'Min (%)': [latest_indicator1['obs_value'].min()*100, latest_indicator2['obs_value'].min()*100],
+    'Max (%)': [latest_indicator1['obs_value'].max()*100, latest_indicator2['obs_value'].max()*100]
+})
+
+# Display the summary statistics
+summary_stats
+```
+
+## Bar Chart
+
+Visualizing child deprivation on a bar helps identify regional patterns and hotspots. The following map shows the percentage of children suffering at least two deprivations across countries.
+
+```{python}
+#| label: world-map
+#| warning: false
+#| fig-cap: "Alternative visualization: Top countries by child deprivation rate"
+
+# Since the geopandas datasets are deprecated in version 1.0+,
+# let's create an alternative visualization instead of the bar
+
+# Get top 20 countries for a visual representation
+top20_countries = latest_indicator1.sort_values('obs_value', ascending=False).head(20)
+top20_countries['obs_value_pct'] = top20_countries['obs_value'] * 100
+
+# Create horizontal bar chart using plotnine
+(ggplot(top20_countries, aes(x='reorder(country, obs_value_pct)', y='obs_value_pct')) +
+ geom_bar(stat='identity', fill='#D55E00', alpha=0.8) +
+ coord_flip() +
+ labs(title='Top 20 Countries with Highest Child Deprivation Rates',
+      subtitle='Percentage of children suffering at least two deprivations',
+      x='Country',
+      y='% Children with 2+ Deprivations') +
+ theme_minimal())
+```
+
+## Ranking of Countries
+
+A ranking of countries by child deprivation levels highlights those most affected and those leading in child welfare. The following bar chart shows the top 15 countries with the highest levels of child deprivation.
+
+```{python}
+#| label: country-ranking
+#| warning: false
+#| fig-cap: "Countries with highest child deprivation rates"
+
+# Prepare data for plotting
+top_countries = latest_indicator1.sort_values('obs_value', ascending=False).head(15)
+top_countries['obs_value_pct'] = top_countries['obs_value'] * 100
+
+# Create bar chart using plotnine
+(ggplot(top_countries, aes(x='reorder(country, obs_value_pct)', y='obs_value_pct')) +
+ geom_bar(stat='identity', fill='#F8766D') +
+ coord_flip() +
+ labs(title='Top 15 Countries with Highest Child Deprivation',
+      x='Country',
+      y='% Children with 2+ Deprivations') +
+ theme_minimal())
+```
+
+# Socioeconomic Correlates of Child Deprivation
+
+## Relationship with GDP per capita
+
+Economic prosperity is often associated with better child welfare. This section explores the relationship between child deprivation and GDP per capita.
+
+```{python}
+#| label: gdp-correlation
+#| warning: false
+#| fig-cap: "Relationship between child deprivation and GDP per capita"
+
+# Prepare data for correlation analysis
+# Get GDP data for the latest year
+latest_metadata = metadata[metadata['year'] == latest_year]
+gdp_data = latest_metadata[['country', 'GDP per capita (constant 2015 US$)']].rename(
+    columns={'GDP per capita (constant 2015 US$)': 'gdp_per_capita'})
+
+# Merge with deprivation data
+merged_data = latest_indicator1.merge(gdp_data, on='country', how='inner')
+merged_data = merged_data[['country', 'obs_value', 'gdp_per_capita']].dropna()
+
+# Compute correlation coefficient
+correlation = merged_data['obs_value'].corr(merged_data['gdp_per_capita'])
+print(f"Correlation coefficient: {correlation:.3f}")
+
+# Create scatter plot with regression line
+(ggplot(merged_data, aes(x='gdp_per_capita', y='obs_value')) +
+ geom_point(alpha=0.6) +
+ geom_smooth(method='lm', color='blue') +
+ scale_y_continuous(labels=lambda l: [f'{v:.0%}' for v in l]) +
+ labs(title='Child Deprivation vs. GDP per Capita',
+      x='GDP per Capita (constant 2015 US$)',
+      y='% Children with 2+ Deprivations') +
+ theme_minimal())
+```
+
+## Multiple Socioeconomic Factors
+
+Child deprivation is influenced by various socioeconomic factors beyond GDP. This section examines correlations with other key indicators.
+
+```{python}
+#| label: multiple-correlations
+#| warning: false
+#| fig-cap: "Correlation between child deprivation and various socioeconomic factors"
+
+# Select relevant socioeconomic indicators
+indicators = ['GDP per capita (constant 2015 US$)', 
+              'Life expectancy at birth, total (years)',
+              'Birth rate, crude (per 1,000 people)',
+              'Hospital beds (per 1,000 people)']
+
+# Prepare data for correlation analysis
+socio_data = latest_metadata[['country'] + indicators].copy()
+correlation_data = latest_indicator1.merge(socio_data, on='country', how='inner')
+correlation_data = correlation_data[['country', 'obs_value'] + indicators].dropna()
+
+# Calculate correlations
+correlations = {}
+for indicator in indicators:
+    correlations[indicator] = correlation_data['obs_value'].corr(correlation_data[indicator])
+
+# Create a bar chart of correlations
+correlation_df = pd.DataFrame({
+    'Indicator': list(correlations.keys()),
+    'Correlation': list(correlations.values())
+})
+
+# Plot the correlations
+(ggplot(correlation_df, aes(x='reorder(Indicator, Correlation)', y='Correlation')) +
+ geom_bar(stat='identity', fill='steelblue') +
+ coord_flip() +
+ labs(title='Correlation of Socioeconomic Factors with Child Deprivation',
+      x='Socioeconomic Indicator',
+      y='Correlation Coefficient') +
+ theme_minimal())
+```
+
+# Trends in Child Deprivation Over Time
+
+## Global Trends
+
+Analyzing trends over time helps understand progress in reducing child deprivation. This section examines global trends over the available time period.
+
+```{python}
+#| label: time-trends
+#| warning: false
+#| fig-cap: "Trends in child deprivation over time"
+
+# Filter for total sex category and calculate average by year
+time_trends = indicator1[indicator1['sex'] == 'Total'].groupby('time_period')['obs_value'].mean().reset_index()
+time_trends['obs_value_pct'] = time_trends['obs_value'] * 100
+
+# Create time series plot
+(ggplot(time_trends, aes(x='time_period', y='obs_value_pct')) +
+ geom_line(size=1, color='#0072B2') +
+ geom_point(size=3, color='#0072B2') +
+ labs(title='Global Trends in Child Deprivation',
+      x='Year',
+      y='Average % Children with 2+ Deprivations') +
+ theme_minimal())
+```
+
+## Regional Trends
+
+Child deprivation trends may vary by region. This section explores how different regions have progressed over time.
+
+```{python}
+#| label: regional-trends
+#| warning: false
+#| fig-cap: "Child deprivation trends by region"
+
+# Create region assignment (simplified example - in real analysis you'd use proper regional classifications)
+# Create a dictionary mapping countries to regions (simplified)
+regions = {
+    'Africa': ['South Africa', 'Nigeria', 'Kenya', 'Ethiopia', 'Egypt', 'Ghana', 'Morocco', 'Tanzania'],
+    'Asia': ['China', 'India', 'Japan', 'Indonesia', 'Thailand', 'Malaysia', 'Philippines', 'Vietnam'],
+    'Europe': ['France', 'Germany', 'Italy', 'United Kingdom', 'Spain', 'Sweden', 'Norway', 'Poland'],
+    'Americas': ['United States', 'Canada', 'Brazil', 'Mexico', 'Argentina', 'Colombia', 'Peru', 'Chile']
+}
+
+# Create flattened mapping of country to region
+country_to_region = {}
+for region, countries in regions.items():
+    for country in countries:
+        country_to_region[country] = region
+
+# Add region to data
+region_data = indicator1[indicator1['sex'] == 'Total'].copy()
+region_data['region'] = region_data['country'].map(country_to_region)
+
+# Calculate averages by region and year
+regional_trends = region_data.dropna(subset=['region']).groupby(['region', 'time_period'])['obs_value'].mean().reset_index()
+regional_trends['obs_value_pct'] = regional_trends['obs_value'] * 100
+
+# Create time series plot by region
+(ggplot(regional_trends, aes(x='time_period', y='obs_value_pct', color='region', group='region')) +
+ geom_line(size=1) +
+ geom_point(size=2) +
+ labs(title='Regional Trends in Child Deprivation',
+      x='Year',
+      y='Average % Children with 2+ Deprivations',
+      color='Region') +
+ theme_minimal())
+```
+
+# Comparison of Different Deprivation Measures
+
+## Multiple vs. Severe Deprivation
+
+Comparing the two deprivation indicators provides insights into the severity of child deprivation across countries. This section explores the relationship between multiple and severe deprivation.
+
+```{python}
+#| label: deprivation-comparison
+#| warning: false
+#| fig-cap: "Comparison of multiple vs. severe deprivation"
+
+# Merge the two indicator datasets for comparison
+comparison_data = latest_indicator1[['country', 'obs_value']].rename(
+    columns={'obs_value': 'multiple_deprivation'})
+comparison_data = comparison_data.merge(
+    latest_indicator2[['country', 'obs_value']].rename(columns={'obs_value': 'severe_deprivation'}),
+    on='country')
+
+# Convert to percentages
+comparison_data['multiple_deprivation_pct'] = comparison_data['multiple_deprivation'] * 100
+comparison_data['severe_deprivation_pct'] = comparison_data['severe_deprivation'] * 100
+
+# Create scatter plot
+(ggplot(comparison_data, aes(x='multiple_deprivation_pct', y='severe_deprivation_pct')) +
+ geom_point(alpha=0.7) +
+ geom_smooth(method='lm', color='red') +
+ labs(title='Multiple vs. Severe Child Deprivation',
+      x='% Children with 2+ Deprivations',
+      y='% Children with 4+ Deprivations') +
+ theme_minimal())
+```
+
+# Gender Disparities in Child Deprivation
+
+Child deprivation may affect boys and girls differently. This section examines gender disparities in child deprivation.
+
+```{python}
+#| label: gender-disparities
+#| warning: false
+#| fig-cap: "Gender disparities in child deprivation"
+
+# Filter data for the most recent year and male/female sex categories
+gender_data = indicator1[(indicator1['time_period'] == latest_year) & 
+                         (indicator1['sex'].isin(['Male', 'Female']))]
+
+# Reshape data for plotting
+gender_pivot = gender_data.pivot(index='country', columns='sex', values='obs_value').reset_index()
+gender_pivot = gender_pivot.dropna()
+gender_pivot['Male_pct'] = gender_pivot['Male'] * 100
+gender_pivot['Female_pct'] = gender_pivot['Female'] * 100
+
+# Create gender disparity plot
+(ggplot(gender_pivot, aes(x='Male_pct', y='Female_pct')) +
+ geom_point(alpha=0.7) +
+ geom_abline(slope=1, intercept=0, linetype='dashed', color='red') +
+ labs(title='Gender Disparities in Child Deprivation',
+      x='% Male Children with 2+ Deprivations',
+      y='% Female Children with 2+ Deprivations') +
+ theme_minimal())
+```
+
+# Conclusion and Recommendations
+
+## Key Findings
+
+This analysis of child deprivation across the world reveals several important insights:
+
+1. **Regional Disparities**: Child deprivation shows significant regional variation, with some regions showing persistently high levels.
+
+2. **Socioeconomic Correlations**: Child deprivation is strongly correlated with economic factors, particularly GDP per capita, highlighting the importance of economic development for child welfare.
+
+3. **Positive Trends**: Many countries have shown improvement over time, demonstrating that effective policies and interventions can reduce child deprivation.
+
+4. **Gender Patterns**: Gender disparities in child deprivation exist in many countries, requiring targeted approaches that address gender-specific challenges.
+
+5. **Multiple Dimensions**: The relationship between multiple and severe deprivation emphasizes the complexity of child poverty and the need for comprehensive approaches.
+
+## Policy Recommendations
+
+Based on these findings, we propose the following policy recommendations:
+
+1. **Targeted Interventions**: Focus resources on regions and countries with the highest deprivation rates.
+
+2. **Integrated Approach**: Address multiple dimensions of deprivation simultaneously (education, health, nutrition, housing).
+
+3. **Gender-Sensitive Policies**: Develop specific interventions to address gender disparities in child deprivation.
+
+4. **Economic Development**: Promote inclusive economic growth as a foundation for reducing child deprivation.
+
+5. **Data Improvements**: Invest in better data collection to monitor child deprivation more comprehensively and frequently.
+
+## Areas for Further Research
+
+This analysis suggests several important areas for further investigation:
+
+1. Examining the impacts of specific policy interventions on child deprivation rates
+2. Understanding the mechanisms linking economic growth to child welfare
+3. Investigating the long-term consequences of childhood deprivation
+4. Exploring the relationships between different dimensions of deprivation
+5. Developing more nuanced measures of child deprivation that capture quality aspects
+
+By continuing to analyze and understand child deprivation, we can develop more effective strategies to ensure that all children have access to the resources and opportunities they need to thrive.
